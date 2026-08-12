@@ -7,6 +7,7 @@ import { store, useDB } from "@/lib/store";
 import { newId, type Memory } from "@/lib/types";
 import { coverSvg } from "@/lib/cover";
 import { Icon } from "@/components/icons";
+import { isMediaCloudEnabled, createUploadPaths, uploadMediaBlobProgress } from "@/lib/media";
 
 type QItem = {
   key: string;
@@ -28,6 +29,7 @@ type QItem = {
   };
   state: "new" | "ready" | "saving" | "done" | "error";
   error?: string;
+  progress?: number;
   width: number;
   height: number;
   duration: number | null;
@@ -202,19 +204,17 @@ export default function UploadPage() {
     setItems((prev) => prev.filter((i) => i.key !== key));
   }
 
-  function saveOne(item: QItem): Memory {
+  function saveOne(item: QItem, mediaUrl: string, thumbUrl: string): Memory {
     const isVideo = item.file.type.startsWith("video/");
-    const binary = item.url;
-    const storeBinary = fileSizeOk(item.file.size);
     const memory: Memory = {
       id: newId(),
       title: item.meta.title || item.file.name,
       media_type: isVideo ? "video" : "image",
       original_filename: item.file.name,
-      storage_key: `users/u1/originals/${new Date().toISOString().slice(0, 7)}/${item.key}`,
-      media_url: storeBinary ? binary : item.thumb,
+      storage_key: `users/media/originals/${new Date().toISOString().slice(0, 7)}/${item.key}`,
+      media_url: mediaUrl,
       thumbnail_key: "",
-      thumbnail: item.thumb,
+      thumbnail: thumbUrl,
       mime_type: item.file.type || (isVideo ? "video/mp4" : "image/jpeg"),
       file_size: item.file.size,
       width: item.width,
@@ -239,18 +239,43 @@ export default function UploadPage() {
     return store.addMemory(memory);
   }
 
+  async function resolveMedia(item: QItem): Promise<{ mediaUrl: string; thumbUrl: string }> {
+    // Cloud (Firebase Storage) on: upload real file + thumbnail, get permanent URLs.
+    if (isMediaCloudEnabled()) {
+      const { original, thumbnail } = await createUploadPaths(item.key, item.file.name, extFor(item.file));
+      const origBlob = await fetch(item.url).then((r) => r.blob());
+      const mediaUrl = await uploadMediaBlobProgress(origBlob, original, item.file.type.startsWith("video/") ? "video" : "image", (pct) =>
+        setItems((prev) => prev.map((i) => (i.key === item.key ? { ...i, progress: pct * 0.9 } : i)))
+      );
+      let thumbUrl = mediaUrl;
+      if (item.thumb.startsWith("data:")) {
+        try {
+          thumbUrl = await uploadMediaBlobProgress(dataUrlToBlob(item.thumb), thumbnail, "image", (pct) =>
+            setItems((prev) => prev.map((i) => (i.key === item.key ? { ...i, progress: 90 + pct * 0.1 } : i)))
+          );
+        } catch {
+          thumbUrl = mediaUrl;
+        }
+      }
+      return { mediaUrl, thumbUrl };
+    }
+    // Offline/local: keep small binaries as data URLs, larger fall back to thumbnail.
+    const mediaUrl = fileSizeOk(item.file.size) ? item.url : item.thumb;
+    return { mediaUrl, thumbUrl: item.thumb };
+  }
+
   async function saveAll() {
     for (const item of items) {
       if (item.state !== "new") continue;
-      setItems((prev) => prev.map((i) => (i.key === item.key ? { ...i, state: "saving" } : i)));
+      setItems((prev) => prev.map((i) => (i.key === item.key ? { ...i, state: "saving", progress: 0 } : i)));
       try {
-        await new Promise((r) => setTimeout(r, 300 + Math.random() * 400));
-        saveOne(item);
-        setItems((prev) => prev.map((i) => (i.key === item.key ? { ...i, state: "done" } : i)));
+        const { mediaUrl, thumbUrl } = await resolveMedia(item);
+        saveOne(item, mediaUrl, thumbUrl);
+        setItems((prev) => prev.map((i) => (i.key === item.key ? { ...i, state: "done", progress: 100 } : i)));
       } catch {
         setItems((prev) =>
           prev.map((i) =>
-            i.key === item.key ? { ...i, state: "error", error: "Could not save. Free up storage." } : i
+            i.key === item.key ? { ...i, state: "error", error: isMediaCloudEnabled() ? "Upload failed. Check your connection." : "Could not save. Free up storage." } : i
           )
         );
       }
@@ -375,6 +400,16 @@ export default function UploadPage() {
               <Icon name="check" className="w-8 h-8" />
             </div>
           )}
+          {item.state === "saving" && (
+            <div className="absolute inset-0 bg-black/50 grid place-items-center text-white">
+              <div className="w-3/4 max-w-[200px]">
+                <div className="h-1.5 bg-white/30 rounded-full overflow-hidden mb-1">
+                  <div className="h-full bg-gradient-to-r from-brand-purple to-brand-cyan rounded-full transition-all" style={{ width: `${item.progress || 0}%` }} />
+                </div>
+                <div className="text-xs text-center text-white/80">{item.progress || 0}%</div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 space-y-3">
@@ -490,4 +525,21 @@ export default function UploadPage() {
 
 function fileSizeOk(bytes: number) {
   return bytes <= 1.5 * 1024 * 1024;
+}
+
+function extFor(file: File): string {
+  const m = file.name.match(/\.([a-zA-Z0-9]+)$/);
+  if (m) return m[1].toLowerCase();
+  if (file.type.startsWith("image/")) return "jpg";
+  if (file.type.startsWith("video/")) return "mp4";
+  return "bin";
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [head, body] = dataUrl.split(",");
+  const mime = head.match(/data:([^;]+)/)?.[1] || "image/jpeg";
+  const bin = atob(body);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
 }
