@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # PocketFrame
 
 Your life, framed your way. A private visual journal + creator companion, storing **why** a moment mattered — not just its file.
@@ -56,6 +55,3 @@ Full walkthrough in **[SETUP_GUIDE.md](./SETUP_GUIDE.md)** — Supabase DB/stora
 - `npm run dev` — dev server
 - `npm run build` / `npm run start` — production build/serve
 - `npm run lint` — eslint
-=======
-# PocketFrame
->>>>>>> d6d22ecb9b7d03c6ffcee0128cd25faa12be06bb
