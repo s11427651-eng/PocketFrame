@@ -1,5 +1,6 @@
 import { cloud } from "./cloud";
 import { getClient, isCloudEnabled, type Row } from "./supabase";
+import { seedInspiration } from "./seed";
 import type { DB } from "./store";
 import type { HighlightCollection, Memory, Project } from "./types";
 
@@ -90,27 +91,26 @@ export async function pullAll(): Promise<{
   };
 }
 
-export async function syncAfterLogin(name: string): Promise<void> {
+export async function syncAfterLogin(name: string, email: string): Promise<void> {
   if (!isCloudEnabled()) return;
   pulling = true;
   try {
     const ws = await cloud.ensureWorkspace(name);
     const data = await pullAll();
-    const { seedInspiration, starterDB } = await import("./store");
+    const { emptyDB } = await import("./store");
     const hasData = data.memories.length > 0 || data.projects.length > 0 || data.collections.length > 0;
-    let next = {} as DB;
+    let next: DB;
     if (!hasData) {
-      // brand-new workspace: share the demo starter content
-      next = starterDB(ws.workspace_id);
+      // fresh account: empty library (only cloud data matters)
+      next = emptyDB(name, email);
     } else {
-      const base = seedInspiration();
       next = {
         memories: data.memories,
         projects: data.projects,
         collections: data.collections.map((c) => ({ ...c, workspace_id: ws.workspace_id })),
-        inspiration: base.map((i) => ({ ...i, favorite: data.favoriteIds.includes(i.id) })),
+        inspiration: seedInspiration().map((i) => ({ ...i, favorite: data.favoriteIds.includes(i.id) })),
         tags: extractTags(data.memories),
-        profile: { name, email: "", avatar_seed: 1 },
+        profile: { name, email, avatar_seed: 1 },
       };
     }
     (await import("./store")).store.replaceDB(next);

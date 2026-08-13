@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { store } from "@/lib/store";
+import { activateUser, store } from "@/lib/store";
 import { cloud } from "@/lib/cloud";
 import { isCloudEnabled } from "@/lib/supabase";
 import { syncAfterLogin } from "@/lib/sync";
@@ -58,11 +58,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = doLogin(username, password);
     if (!res.ok || !res.user) return res;
 
+    // Activate user's local DB first
+    activateUser(res.user.username);
+
     if (isCloudEnabled()) {
       const cloudRes = await cloud.login(res.user.email, password);
-      if (!cloudRes.ok) return { ok: false, error: `Could not reach the cloud. ${cloudRes.error || ""}` };
+      if (!cloudRes.ok) return { ok: false, error: `Cloud sign-in failed. ${cloudRes.error || ""}` };
       try {
-        await syncAfterLogin(res.user.name);
+        await syncAfterLogin(res.user.name, res.user.email);
       } catch (e) {
         console.warn("[auth] sync failed", e);
       }
@@ -76,11 +79,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = doRegister(data);
     if (!res.ok || !res.user) return res;
 
+    // Activate user's local DB first
+    activateUser(res.user.username);
+
     if (isCloudEnabled()) {
       const cloudRes = await cloud.register(res.user.email, data.password);
-      if (!cloudRes.ok) return { ok: false, error: `Could not create cloud account. ${cloudRes.error || ""}` };
+      if (!cloudRes.ok) return { ok: false, error: `Cloud sign-up failed. ${cloudRes.error || ""}` };
       try {
-        await syncAfterLogin(res.user.name);
+        await syncAfterLogin(res.user.name, res.user.email);
       } catch (e) {
         console.warn("[auth] sync failed", e);
       }
@@ -92,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function logout() {
     if (isCloudEnabled()) cloud.signOut().catch(() => {});
+    activateUser(""); // Back to demo default
     commit(null);
   }
 

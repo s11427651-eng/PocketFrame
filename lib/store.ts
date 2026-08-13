@@ -30,17 +30,39 @@ const DEFAULT: DB = {
   profile: { name: "Rafael", email: "rafael@pocketframe.app", avatar_seed: 3 },
 };
 
-function load(): DB {
+let dbKey = PREFIX + "db";
+
+function readKey(key: string): DB {
   if (typeof window === "undefined") return seeded();
-  const raw = localStorage.getItem(PREFIX + "db");
-  if (!raw) return seeded();
+  const raw = localStorage.getItem(key);
+  if (!raw) return key.endsWith(":demo") ? seeded() : emptyUser();
   try {
-    const parsed = JSON.parse(raw) as DB;
-    if (!parsed.memories.length) return parsed;
-    return parsed;
+    return JSON.parse(raw) as DB;
   } catch {
-    return seeded();
+    return key.endsWith(":demo") ? seeded() : emptyUser();
   }
+}
+
+function load(): DB {
+  return readKey(dbKey);
+}
+
+function emptyUser(): DB {
+  return {
+    memories: [],
+    projects: [],
+    collections: [],
+    inspiration: JSON.parse(JSON.stringify(seedInspiration())),
+    tags: [],
+    profile: { name: "", email: "", avatar_seed: 1 },
+  };
+}
+
+export function emptyDB(name: string, email: string): DB {
+  return {
+    ...emptyUser(),
+    profile: { name: name || "Creator", email: email || "", avatar_seed: 1 },
+  };
 }
 
 function seeded(): DB {
@@ -68,9 +90,17 @@ const listeners = new Set<() => void>();
 
 function persist() {
   if (typeof window === "undefined") return;
-  localStorage.setItem(PREFIX + "db", JSON.stringify(db));
+  localStorage.setItem(dbKey, JSON.stringify(db));
   listeners.forEach((l) => l());
   import("./sync").then((m) => m.schedulePush()).catch(() => {});
+}
+
+export function activateUser(username: string) {
+  const oldKey = dbKey;
+  dbKey = PREFIX + "db:" + (username || "demo");
+  const next = readKey(dbKey);
+  if (dbKey !== oldKey) db = next;
+  listeners.forEach((l) => l());
 }
 
 function subscribe(cb: () => void) {
